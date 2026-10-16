@@ -134,7 +134,7 @@ if [ -n "$OFFSITE_TARGET" ]; then
     rm -f "$STATE_DIR/offsite-failed"
     log "异地同步完成：$OFFSITE_TARGET"
   else
-    printf '%s 异地同步失败（本地备份成功，不受影响）\n' "$(date '+%F %T')" > "$STATE_DIR/offsite-failed"
+    printf '%s 异地同步失败（本地备份成功，不受影响）：%s\n' "$(date '+%F %T')" "$(printf '%s' "$OFFSITE_ERR" | head -n1 | cut -c1-200)" > "$STATE_DIR/offsite-failed"
     log "[注意] 本地成功、异地失败：$OFFSITE_ERR"
     OFFSITE_FAILED=1
   fi
