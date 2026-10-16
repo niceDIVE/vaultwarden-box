@@ -19,7 +19,7 @@ VW_VERSION="${VW_VERSION:-1.37.2}"          # Vaultwarden 固定版本号
 VW_DIR="/opt/vaultwarden"                   # 部署目录
 APP_PORT="${ROCKET_PORT:-8222}"             # 对内监听端口
 APP_USER="vwadmin"                          # 日常登录服务器的管理员账号
-BACKUP_DIR="/var/backups/vaultwarden"       # 备份目录
+BACKUP_DIR_DEFAULT="/var/backups/vaultwarden"  # 备份目录默认值（实际以 .env 中 BACKUP_DIR 为准，见阶段 5）
 SRV_TZ="Asia/Shanghai"                      # 服务器时区（备份时间按此计算）
 SSH_HARDEN_CONF="/etc/ssh/sshd_config.d/60-vw-hardening.conf"
 
@@ -119,13 +119,24 @@ info "本机 ts.net 域名：$TS_FQDN（下面会自动填入 DOMAIN）"
 # ============================================================================
 banner "阶段 5/10  部署 Vaultwarden 配置文件"
 # ============================================================================
-mkdir -p "$VW_DIR/data" "$BACKUP_DIR"
-chmod 700 "$BACKUP_DIR"
+mkdir -p "$VW_DIR/data"
 
 install -m 644 "$SCRIPT_DIR/docker-compose.yml" "$VW_DIR/docker-compose.yml"
 install -m 700 "$SCRIPT_DIR/backup.sh"          "$VW_DIR/backup.sh"
 install -m 644 "$SCRIPT_DIR/vw-backup.service"  /etc/systemd/system/vw-backup.service
 install -m 644 "$SCRIPT_DIR/vw-backup.timer"    /etc/systemd/system/vw-backup.timer
+
+# 备份目录以 .env 配置为准（.env 刚生成或已存在）
+if [ -f "$VW_DIR/.env" ]; then
+  # shellcheck disable=SC1091
+  set -a
+  # shellcheck disable=SC1091
+  . "$VW_DIR/.env"
+  set +a
+fi
+BACKUP_DIR="${BACKUP_DIR:-$BACKUP_DIR_DEFAULT}"
+mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
 
 if [ -f "$VW_DIR/.env" ]; then
   ok ".env 已存在，不覆盖（如需重新配置请手动编辑 $VW_DIR/.env）"
@@ -222,6 +233,12 @@ else
   echo "$APP_USER ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/90-$APP_USER"
   chmod 440 "/etc/sudoers.d/90-$APP_USER"
   ok "管理员账号 $APP_USER 创建完成（已具备 sudo 权限，登录后直接可用）"
+fi
+
+# D1：备份目录组权限（vwadmin 直接 scp 下载备份用；backup.sh 每次运行也会补设）
+if getent group "$APP_USER" >/dev/null 2>&1; then
+  chown root:"$APP_USER" "$BACKUP_DIR"
+  chmod 750 "$BACKUP_DIR"
 fi
 
 # 只在管理员账号确实装好了公钥之后，才收紧 SSH
