@@ -1,0 +1,8 @@
+# 强制所有文本文件在仓库中保存为 LF（Linux 换行符），
+# 无论在什么系统上克隆/检出都不改变——脚本要上传到 Linux 服务器执行
+* text=auto eol=lf
+
+# 二进制文件不做任何转换
+*.age binary
+*.tar.gz binary
+*.png binary
