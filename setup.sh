@@ -52,19 +52,14 @@ apt-get update -y -qq
 apt-get install -y -qq ca-certificates curl gnupg jq sqlite3 ufw rsync >/dev/null
 ok "基础软件包就绪（curl / jq / sqlite3 / ufw / rsync）"
 
-# age：Ubuntu 24.04 软件源里有；万一没有则从 GitHub 官方发布下载
-if command -v age >/dev/null 2>&1; then
-  ok "age 加密工具已安装：$(age --version 2>/dev/null || echo ok)"
-else
-  if apt-get install -y -qq age >/dev/null 2>&1 && command -v age >/dev/null 2>&1; then
-    ok "age 加密工具已安装（apt）"
-  else
-    info "apt 源中没有 age，改从 GitHub 官方发布下载…"
-    curl -fsSL https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-amd64.tar.gz \
-      | tar xz -C /usr/local/bin --strip-components=1 age/age age/age-keygen
-    ok "age 加密工具已安装（GitHub 官方二进制）"
-  fi
+# age：Ubuntu 24.04 软件源（universe）自带；装不上就明确报错，不做无校验的下载
+if ! command -v age >/dev/null 2>&1; then
+  apt-get install -y -qq age >/dev/null 2>&1 || true
 fi
+if ! command -v age >/dev/null 2>&1; then
+  fail "age 安装失败。请确认软件源 universe 已启用：sudo add-apt-repository universe，然后重跑本脚本"
+fi
+ok "age 加密工具已安装：$(age --version 2>/dev/null || echo ok)"
 
 # ============================================================================
 banner "阶段 2/10  安装 Docker（含 Compose 插件）"
