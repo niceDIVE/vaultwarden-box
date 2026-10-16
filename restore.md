@@ -62,11 +62,11 @@ ssh vwadmin@<服务器Tailscale地址>
 
 3. 在服务器上执行以下命令（逐条粘贴，每条回车）：
 ```bash
-# 暂停定时备份，避免恢复过程中触发一次坏备份
-sudo systemctl stop vw-backup.timer
-
-# 先验证备份包完好（不显示"包完好"就停止，不要继续往下做）
+# 先验证备份包完好（不显示"包完好"就停止，不要继续往下做——此时什么都没改动，直接结束即可）
 sudo tar -tzf /tmp/vw-backup.tar.gz >/dev/null && echo 包完好
+
+# 验包通过后，暂停定时备份，避免恢复过程中触发一次坏备份
+sudo systemctl stop vw-backup.timer
 
 # 停掉容器
 cd /opt/vaultwarden && sudo docker compose down
@@ -96,9 +96,16 @@ rm -f /tmp/vw-backup.tar.gz
 ```
 
 5. 跳到本文【三、逐项验收】。
+6. **第三节验收全部通过后**，清理并恢复定时任务（在服务器上执行）：
+
+```bash
+sudo rm -rf /opt/vaultwarden/data.old-*
+sudo systemctl start vw-backup.timer
+```
+
+   **成功标志**：`systemctl is-active vw-backup.timer` 输出 `active`。
 
 > **恢复失败怎么回到原状**：`cd /opt/vaultwarden && sudo docker compose down` → 删除新解压出来的 data → 把 `data.old-日期` 改回 `data` → `sudo docker compose up -d`。
-> **第三节验收全部通过后**，再清理并恢复定时任务：`sudo rm -rf /opt/vaultwarden/data.old-*` 和 `sudo systemctl start vw-backup.timer`。
 
 ### 情况 B：全新服务器（原服务器报废）
 
@@ -125,6 +132,8 @@ rm -f /tmp/vw-backup.tar.gz
 5. **恢复异地同步**：旧同步密钥随旧服务器一起丢失了。按《安装指南.md》第 10 节第 3～6 步
    重新生成同步密钥、替换备份机上的 `authorized_keys`（备份机不动，只换钥匙），
    然后跑一次 `sudo /opt/vaultwarden/backup.sh` 确认出现「异地同步完成」。否则异地同步会一直失败。
+6. **按情况 A 第 6 步恢复定时任务**。
+   **成功标志**：`systemctl is-active vw-backup.timer` 输出 `active`。
 
 ---
 
