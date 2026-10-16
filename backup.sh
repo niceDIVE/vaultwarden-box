@@ -10,7 +10,7 @@
 #   2. 连同 attachments、sends、rsa_key*、config.json、.env、compose 一起打包
 #   3. 用 age 公钥加密（私钥在离线保存，服务器上没有，所以服务器被黑也读不了备份）
 #   4. 清理超过保留期（默认 30 天）的本地旧备份
-#   5. 如果 .env 配置了 OFFSITE_TARGET，用 rsync 同步到异地服务器（失败只提醒不中断）
+#   5. 如果 .env 配置了 OFFSITE_TARGET，用 rsync 同步到异地服务器（本地失败 exit 1；仅异地失败 exit 2）
 #
 # 日志：journalctl -u vw-backup.service  以及  /var/log/vw-backup.log
 # ============================================================================
@@ -20,6 +20,7 @@ VW_DIR="/opt/vaultwarden"
 DATA_DIR="$VW_DIR/data"
 ENV_FILE="$VW_DIR/.env"
 LOG_FILE="/var/log/vw-backup.log"
+STATE_DIR="/var/lib/vw-backup"
 
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG_FILE"; }
 die() { log "[失败] $*"; exit 1; }
@@ -39,7 +40,11 @@ OFFSITE_SSH_KEY="${OFFSITE_SSH_KEY:-/root/.ssh/vw_offsite}"
 
 # ---------------- 前置检查 ----------------
 exec 9>/run/vw-backup.lock
-flock -n 9 || die "已有备份任务在运行，本次退出"
+flock -n 9 || { log "已有备份在运行，本次跳过"; exit 0; }
+
+OFFSITE_FAILED=0
+mkdir -p "$STATE_DIR"
+chmod 755 "$STATE_DIR"
 
 command -v sqlite3 >/dev/null || die "缺少 sqlite3"
 command -v age     >/dev/null || die "缺少 age"
@@ -51,7 +56,14 @@ esac
 [ -f "$DATA_DIR/db.sqlite3" ] || die "找不到数据库 $DATA_DIR/db.sqlite3"
 
 mkdir -p "$BACKUP_DIR"
-chmod 700 "$BACKUP_DIR"
+# D1：备份目录组可读（包已 age 加密，组可读无风险；vwadmin 可直接 scp 下载）
+if getent group vwadmin >/dev/null 2>&1; then
+  chown root:vwadmin "$BACKUP_DIR"
+  chmod 750 "$BACKUP_DIR"
+else
+  chmod 700 "$BACKUP_DIR"
+  log "[注意] 不存在 vwadmin 组，备份目录保持 700（仅 root 可读）"
+fi
 
 STAMP="$(date +%Y%m%d-%H%M)"
 TMP="$(mktemp -d /tmp/vw-backup.XXXXXX)"
@@ -73,9 +85,16 @@ CHK="$(sqlite3 "$STAGE/db.sqlite3" 'PRAGMA integrity_check;')"
 log "数据库导出完成，完整性校验通过"
 
 # ---------------- 3) 汇集其余需要备份的内容 ----------------
-cp -a "$DATA_DIR/attachments/." "$STAGE/attachments/" 2>/dev/null || true
-cp -a "$DATA_DIR/sends/."       "$STAGE/sends/"       2>/dev/null || true
-cp -a "$DATA_DIR"/rsa_key*      "$STAGE/"             2>/dev/null || true
+for d in attachments sends; do
+  if [ -d "$DATA_DIR/$d" ]; then
+    cp -a "$DATA_DIR/$d/." "$STAGE/$d/" || die "复制 $d 失败（磁盘满或权限问题？）"
+  fi
+done
+if compgen -G "$DATA_DIR/rsa_key*" >/dev/null; then
+  cp -a "$DATA_DIR"/rsa_key* "$STAGE/" || die "复制 rsa_key 失败"
+else
+  log "[注意] 没有找到 rsa_key*：恢复后所有客户端需要重新登录（数据不受影响）"
+fi
 if [ -f "$DATA_DIR/config.json" ]; then cp -a "$DATA_DIR/config.json" "$STAGE/"; fi
 cp -a "$ENV_FILE"               "$STAGE/env"
 cp -a "$VW_DIR/docker-compose.yml" "$STAGE/docker-compose.yml"
@@ -84,13 +103,19 @@ cp -a "$VW_DIR/docker-compose.yml" "$STAGE/docker-compose.yml"
 tar -C "$STAGE" -czf "$TMP/payload.tar.gz" .
 OUT="$BACKUP_DIR/vw-backup-$STAMP.tar.gz.age"
 age -R "$AGE_PUBLIC_KEY" -o "$OUT" "$TMP/payload.tar.gz"
-chmod 600 "$OUT"
+if getent group vwadmin >/dev/null 2>&1; then
+  chown root:vwadmin "$OUT"
+  chmod 640 "$OUT"
+  find "$BACKUP_DIR" -maxdepth 1 -name 'vw-backup-*.tar.gz.age' -exec chown root:vwadmin {} + -exec chmod 640 {} +
+else
+  chmod 600 "$OUT"
+fi
 log "已生成加密备份：$OUT（大小 $(du -h "$OUT" | cut -f1)）"
 
-# 快速自检：加密包必须无法被随意读取
-if tar -tzf "$OUT" >/dev/null 2>&1; then
-  die "异常：$OUT 竟然能直接读取，说明没有加密成功，请立即检查 age 配置"
-fi
+# 快速自检：必须是 age 加密格式（文件头 age-encryption.org/v1）
+[ "$(head -c 21 "$OUT" 2>/dev/null)" = "age-encryption.org/v1" ] || die "异常：$OUT 不是 age 加密文件，请立即检查 age 配置"
+date '+%F %T' > "$STATE_DIR/last-success"
+chmod 644 "$STATE_DIR/last-success"
 
 # ---------------- 5) 清理过期备份 ----------------
 find "$BACKUP_DIR" -maxdepth 1 -name 'vw-backup-*.tar.gz.age' -mtime +"$RETENTION_DAYS" \
@@ -99,13 +124,26 @@ find "$BACKUP_DIR" -maxdepth 1 -name 'vw-backup-*.tar.gz.age' -mtime +"$RETENTIO
 # ---------------- 6) 异地同步（可选） ----------------
 if [ -n "$OFFSITE_TARGET" ]; then
   RSH="ssh"
-  [ -n "$OFFSITE_SSH_KEY" ] && RSH="ssh -i $OFFSITE_SSH_KEY"
-  if rsync -a -e "$RSH -o BatchMode=yes -o ConnectTimeout=15" \
-       "$BACKUP_DIR/" "$OFFSITE_TARGET/"; then
+  if [ -n "$OFFSITE_SSH_KEY" ]; then RSH="ssh -i \"$OFFSITE_SSH_KEY\""; fi
+  set +e
+  OFFSITE_ERR="$(rsync -rt --ignore-existing -e "$RSH -o BatchMode=yes -o ConnectTimeout=15" \
+       "$BACKUP_DIR/" "$OFFSITE_TARGET" 2>&1)"
+  RC=$?
+  set -e
+  if [ "$RC" -eq 0 ]; then
+    rm -f "$STATE_DIR/offsite-failed"
     log "异地同步完成：$OFFSITE_TARGET"
   else
-    log "[注意] 异地同步失败（本地备份不受影响）。请检查异地服务器与 SSH 密钥配置。"
+    printf '%s 异地同步失败（本地备份成功，不受影响）：%s\n' "$(date '+%F %T')" "$(printf '%s' "$OFFSITE_ERR" | head -n1 | cut -c1-200)" > "$STATE_DIR/offsite-failed"
+    log "[注意] 本地成功、异地失败：$OFFSITE_ERR"
+    OFFSITE_FAILED=1
   fi
+else
+  rm -f "$STATE_DIR/offsite-failed"
 fi
 
 log "本次备份全部完成"
+if [ "${OFFSITE_FAILED:-0}" -eq 1 ]; then
+  log "[注意] 已写入 $STATE_DIR/offsite-failed，下次 SSH 登录时会黄字提醒（本地备份仍保留）"
+  exit 2
+fi

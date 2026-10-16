@@ -19,7 +19,7 @@ VW_VERSION="${VW_VERSION:-1.37.2}"          # Vaultwarden 固定版本号
 VW_DIR="/opt/vaultwarden"                   # 部署目录
 APP_PORT="${ROCKET_PORT:-8222}"             # 对内监听端口
 APP_USER="vwadmin"                          # 日常登录服务器的管理员账号
-BACKUP_DIR="/var/backups/vaultwarden"       # 备份目录
+BACKUP_DIR_DEFAULT="/var/backups/vaultwarden"  # 备份目录默认值（实际以 .env 中 BACKUP_DIR 为准，见阶段 5）
 SRV_TZ="Asia/Shanghai"                      # 服务器时区（备份时间按此计算）
 SSH_HARDEN_CONF="/etc/ssh/sshd_config.d/60-vw-hardening.conf"
 
@@ -34,7 +34,7 @@ banner() { echo; echo "================ $* ================"; }
 # ---------------- 前置检查 ----------------
 [ "$(id -u)" -eq 0 ] || fail "请用 root 或 sudo 运行：sudo bash setup.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-for f in docker-compose.yml .env.example backup.sh vw-backup.service vw-backup.timer; do
+for f in docker-compose.yml .env.example backup.sh vw-backup-check.sh vw-backup.service vw-backup.timer; do
   [ -f "$SCRIPT_DIR/$f" ] || fail "当前目录缺少文件 $f —— 请把整个部署文件夹完整上传到服务器"
 done
 
@@ -52,19 +52,14 @@ apt-get update -y -qq
 apt-get install -y -qq ca-certificates curl gnupg jq sqlite3 ufw rsync >/dev/null
 ok "基础软件包就绪（curl / jq / sqlite3 / ufw / rsync）"
 
-# age：Ubuntu 24.04 软件源里有；万一没有则从 GitHub 官方发布下载
-if command -v age >/dev/null 2>&1; then
-  ok "age 加密工具已安装：$(age --version 2>/dev/null || echo ok)"
-else
-  if apt-get install -y -qq age >/dev/null 2>&1 && command -v age >/dev/null 2>&1; then
-    ok "age 加密工具已安装（apt）"
-  else
-    info "apt 源中没有 age，改从 GitHub 官方发布下载…"
-    curl -fsSL https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-amd64.tar.gz \
-      | tar xz -C /usr/local/bin --strip-components=1 age/age age/age-keygen
-    ok "age 加密工具已安装（GitHub 官方二进制）"
-  fi
+# age：Ubuntu 24.04 软件源（universe）自带；装不上就明确报错，不做无校验的下载
+if ! command -v age >/dev/null 2>&1; then
+  apt-get install -y -qq age >/dev/null 2>&1 || true
 fi
+if ! command -v age >/dev/null 2>&1; then
+  fail "age 安装失败。请确认软件源 universe 已启用：sudo add-apt-repository universe，然后重跑本脚本"
+fi
+ok "age 加密工具已安装：$(age --version 2>/dev/null || echo ok)"
 
 # ============================================================================
 banner "阶段 2/10  安装 Docker（含 Compose 插件）"
@@ -119,13 +114,20 @@ info "本机 ts.net 域名：$TS_FQDN（下面会自动填入 DOMAIN）"
 # ============================================================================
 banner "阶段 5/10  部署 Vaultwarden 配置文件"
 # ============================================================================
-mkdir -p "$VW_DIR/data" "$BACKUP_DIR"
-chmod 700 "$BACKUP_DIR"
+mkdir -p "$VW_DIR/data"
 
 install -m 644 "$SCRIPT_DIR/docker-compose.yml" "$VW_DIR/docker-compose.yml"
 install -m 700 "$SCRIPT_DIR/backup.sh"          "$VW_DIR/backup.sh"
 install -m 644 "$SCRIPT_DIR/vw-backup.service"  /etc/systemd/system/vw-backup.service
 install -m 644 "$SCRIPT_DIR/vw-backup.timer"    /etc/systemd/system/vw-backup.timer
+
+# 备份目录以 .env 配置为准（.env 刚生成或已存在）；只取 BACKUP_DIR，不导入整个 .env
+if [ -f "$VW_DIR/.env" ]; then
+  BACKUP_DIR="$(sed -n 's/^BACKUP_DIR=//p' "$VW_DIR/.env" 2>/dev/null | tail -n1)"
+fi
+BACKUP_DIR="${BACKUP_DIR:-$BACKUP_DIR_DEFAULT}"
+mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
 
 if [ -f "$VW_DIR/.env" ]; then
   ok ".env 已存在，不覆盖（如需重新配置请手动编辑 $VW_DIR/.env）"
@@ -224,6 +226,12 @@ else
   ok "管理员账号 $APP_USER 创建完成（已具备 sudo 权限，登录后直接可用）"
 fi
 
+# D1：备份目录组权限（vwadmin 直接 scp 下载备份用；backup.sh 每次运行也会补设）
+if getent group "$APP_USER" >/dev/null 2>&1; then
+  chown root:"$APP_USER" "$BACKUP_DIR"
+  chmod 750 "$BACKUP_DIR"
+fi
+
 # 只在管理员账号确实装好了公钥之后，才收紧 SSH
 if [ -s "/home/$APP_USER/.ssh/authorized_keys" ]; then
   cat > "$SSH_HARDEN_CONF" <<EOF
@@ -247,9 +255,21 @@ fi
 # ============================================================================
 banner "阶段 9/10  启用每日加密备份定时任务"
 # ============================================================================
+install -m 644 "$SCRIPT_DIR/vw-backup-check.sh" /etc/profile.d/vw-backup-check.sh
+ok "登录备份状态提醒已安装（/etc/profile.d/vw-backup-check.sh）"
 systemctl daemon-reload
 systemctl enable --now vw-backup.timer >/dev/null 2>&1
 ok "每日备份定时任务已启用（北京时间 04:00，系统时区 $SRV_TZ）"
+cat > /etc/logrotate.d/vw-backup <<'LREOF'
+/var/log/vw-backup.log {
+    weekly
+    rotate 8
+    compress
+    missingok
+    notifempty
+}
+LREOF
+ok "备份日志轮转已配置（/etc/logrotate.d/vw-backup，weekly 保留 8 份）"
 info "查看下次执行时间：systemctl list-timers vw-backup.timer"
 
 if grep -q '^AGE_PUBLIC_KEY=$' "$VW_DIR/.env" 2>/dev/null || ! grep -q '^AGE_PUBLIC_KEY=age1' "$VW_DIR/.env" 2>/dev/null; then

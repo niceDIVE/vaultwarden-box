@@ -10,11 +10,12 @@
 
 | # | 东西 | 在哪里 | 什么样的 |
 |---|------|--------|----------|
-| 1 | **age 私钥文件** | 你离线保存的地方（U 盘 / 打印件 / 本机安全目录） | 一个文本文件，内容是 `AGE-SECRET-KEY-` 开头的一行 |
+| 1 | **age 私钥文件** | U 盘 / 打印件（不在任何电脑和服务器上） | 一个文本文件，内容是 `AGE-SECRET-KEY-` 开头的一行 |
 | 2 | **最新的加密备份包** | 异地备份服务器上，或你 Windows 电脑上手动复制的副本 | 文件名形如 `vw-backup-20250101-0402.tar.gz.age` |
 | 3 | **一台能 SSH 的电脑** | 你的 Windows | 装有 PowerShell（系统自带） |
 
 > ⚠️ 备份包本身是加密的，没有私钥谁也打不开——这正是我们要的效果。
+> 💡 如果私钥只有打印件：先用记事本把那一行一字不差地抄成 U 盘上的 key.txt，再按下面步骤解密。
 > ⚠️ 如果你想不起私钥放在哪，**现在立刻去找并确认**，这是整套备份里最关键的一件东西。
 
 ---
@@ -27,15 +28,15 @@
 2. 打开 **PowerShell**（开始菜单 → 输入 PowerShell → 回车），逐条输入：
 
 ```powershell
-# 进入工具目录（假设你的 age.exe、私钥、备份包都在这里）
+# 进入工具目录（假设 age.exe 和备份包在这里）
 cd C:\Tools\age
 
-# 解密：-i 指定私钥文件，最后是加密备份包的文件名（改成你实际的文件名）
-.\age.exe -d -i key.txt -o vw-backup.tar.gz vw-backup-20250101-0402.tar.gz.age
+# 解密：-i 指定 U 盘上的私钥（E: 换成你的实际盘符），最后是加密备份包的文件名（改成你实际的文件名）
+.\age.exe -d -i E:\key.txt -o vw-backup.tar.gz vw-backup-20250101-0402.tar.gz.age
 ```
 
 3. **确认成功的标志**：目录里出现 `vw-backup.tar.gz`，且命令没有报错。
-4. （可选）看一眼包里有什么：`.\tar.exe -tzf vw-backup.tar.gz`
+4. （可选）看一眼包里有什么：`tar -tzf vw-backup.tar.gz`（Windows 10/11 自带 tar）
    应该能看到 `db.sqlite3`、`attachments/`、`sends/`、`rsa_key*`、`config.json`、`env`、`docker-compose.yml`。
 
 ---
@@ -61,13 +62,18 @@ ssh vwadmin@<服务器Tailscale地址>
 ```
 
 3. 在服务器上执行以下命令（逐条粘贴，每条回车）：
-
 ```bash
+# 先验证备份包完好（不显示"包完好"就停止，不要继续往下做——此时什么都没改动，直接结束即可）
+sudo tar -tzf /tmp/vw-backup.tar.gz >/dev/null && echo 包完好
+
+# 验包通过后，暂停定时备份，避免恢复过程中触发一次坏备份
+sudo systemctl stop vw-backup.timer
+
 # 停掉容器
 cd /opt/vaultwarden && sudo docker compose down
 
-# 清空数据目录（这是"删掉容器和数据"的那一步）
-sudo rm -rf /opt/vaultwarden/data
+# 旧数据先改名保留（不要删！恢复失败靠它回到原状）
+sudo mv /opt/vaultwarden/data /opt/vaultwarden/data.old-$(date +%F-%H%M%S)
 sudo mkdir -p /opt/vaultwarden/data
 
 # 解开备份包，覆盖到数据目录
@@ -84,7 +90,6 @@ cd /opt/vaultwarden && sudo docker compose up -d
 # 等 10 秒，确认服务活着（输出 OK 即成功）
 sleep 10 && curl http://127.0.0.1:8222/alive
 ```
-
 4. **清理明文临时文件**（重要！明文数据库不能留在服务器上）：
 
 ```bash
@@ -92,20 +97,37 @@ rm -f /tmp/vw-backup.tar.gz
 ```
 
 5. 跳到本文【三、逐项验收】。
+6. **第三节验收全部通过后**，清理并恢复定时任务（在服务器上执行）：
+
+```bash
+sudo rm -rf /opt/vaultwarden/data.old-*
+sudo systemctl start vw-backup.timer
+```
+
+   **成功标志**：`systemctl is-active vw-backup.timer` 输出 `active`。
+
+> **恢复失败怎么回到原状**（在第三节验收发现问题、需要退回旧数据时，在服务器上逐条执行）：
+>
+> ```bash
+> cd /opt/vaultwarden && sudo docker compose down
+> ls -d /opt/vaultwarden/data.old-*      ← 看清楚名字
+> sudo rm -rf /opt/vaultwarden/data
+> sudo mv /opt/vaultwarden/data.old-<上面看到的时间> /opt/vaultwarden/data
+> sudo docker compose up -d
+> ```
 
 ### 情况 B：全新服务器（原服务器报废）
 
-1. **先把新服务器部署到"可用"状态**：按《安装指南.md》第 1～2 节完成：
+0. **先在 Tailscale 后台删除旧服务器**：浏览器打开 https://login.tailscale.com/admin/machines → 找到旧密码箱服务器 → Remove。这样新服务器才能沿用原来的 `vaultwarden.xxx.ts.net` 域名，**客户端（Windows/安卓）就不用改服务器地址**。
+1. **把新服务器部署到"可用"状态**：按《安装指南.md》第 1～2 节完成：
    - 开通 Ubuntu 24.04 VPS、首次 SSH 登录
    - 上传部署文件夹、运行 `sudo bash setup.sh`（会自动装好 Docker、Tailscale、备份定时任务等）
    - 此时 Tailscale 会给新服务器分配域名，**记下它**（用 `tailscale ip -4` 和 `tailscale status` 查看）
-
 2. **按【情况 A】的第 1～4 步完成上传、解压、还原、启动**。
    注意：解压会把备份包里的旧 `.env` 覆盖到新服务器上——这正是想要的，
    因为旧 `.env` 里保存着你的 age 公钥和账号策略。但旧 `.env` 里的 `DOMAIN`
    指向旧服务器的域名，所以下一步要修正它。
-
-3. **修正域名**：新服务器的 ts.net 域名可能与旧服务器不同，如果不同，改回来：
+3. **修正域名**：如果新服务器的 ts.net 域名与旧服务器不同（做了第 0 步则应该相同），改回来：
 
    ```bash
    sudo nano /opt/vaultwarden/.env
@@ -115,8 +137,12 @@ rm -f /tmp/vw-backup.tar.gz
    ```
 
    查看新服务器域名的命令：`tailscale status`（Self 一行里 `vaultwarden.xxx.ts.net` 就是）。
-
 4. 如果客户端（Windows/安卓）里的服务器地址变了，也要改成新地址。
+5. **恢复异地同步**：旧同步密钥随旧服务器一起丢失了。按《安装指南.md》第 10 节第 3～6 步
+   重新生成同步密钥、替换备份机上的 `authorized_keys`（备份机不动，只换钥匙），
+   然后跑一次 `sudo /opt/vaultwarden/backup.sh` 确认出现「异地同步完成」。否则异地同步会一直失败。
+6. **按情况 A 第 6 步恢复定时任务**。
+   **成功标志**：`systemctl is-active vw-backup.timer` 输出 `active`。
 
 ---
 
@@ -136,7 +162,7 @@ rm -f /tmp/vw-backup.tar.gz
 第 8 项跑完后，在 Windows 上用你的 age 私钥试解一次**新备份包**：
 
 ```powershell
-.\age.exe -d -i key.txt -o test.tar.gz <新备份包文件名>.age
+.\age.exe -d -i E:\key.txt -o test.tar.gz <新备份包文件名>.age（E: 按实际 U 盘盘符）
 ```
 
 解密成功 = 整个"备份 → 恢复"闭环验证通过。验证完删除 `test.tar.gz`。
@@ -154,4 +180,4 @@ rm -f /tmp/vw-backup.tar.gz
 - **`age: error: decryption failed`** → 私钥文件不对（可能拿了公钥或别的密钥）。检查 `key.txt` 第一行是否以 `AGE-SECRET-KEY-` 开头。
 - **`scp` 提示 permission denied** → 确认用户名是 `vwadmin` 且你在用 Tailscale 地址连接（公网 22 已被防火墙封锁，这是故意的）。
 - **登录页能开但密码错误** → 主密码不随服务器存储/恢复，它在你脑子里。主密码丢了且没有客户端还登录着，数据无法找回——所以主密码请用密码箱自己存一份纸质副本在保险处。
-- **恢复后 HTTPS 打不开** → 新服务器域名变了导致 DOMAIN 不对，按【情况 B】第 2 步改 `.env` 后 `sudo docker compose up -d`。
+- **恢复后 HTTPS 打不开** → 新服务器域名变了导致 DOMAIN 不对，按【情况 B】第 3 步改 `.env` 后 `sudo docker compose up -d`。
