@@ -162,7 +162,7 @@ sudo systemctl start vw-backup.timer
 第 8 项跑完后，在 Windows 上用你的 age 私钥试解一次**新备份包**：
 
 ```powershell
-.\age.exe -d -i key.txt -o test.tar.gz <新备份包文件名>.age
+.\age.exe -d -i E:\key.txt -o test.tar.gz <新备份包文件名>.age（E: 按实际 U 盘盘符）
 ```
 
 解密成功 = 整个"备份 → 恢复"闭环验证通过。验证完删除 `test.tar.gz`。
