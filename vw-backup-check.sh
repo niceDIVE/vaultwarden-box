@@ -16,3 +16,4 @@ fi
 if [ -r "$__vw_state/offsite-failed" ]; then
     printf '\033[33m⚠ 上次异地同步失败：%s，见安装指南第 10 节\033[0m\n' "$(tr '\n' ' ' < "$__vw_state/offsite-failed" 2>/dev/null)"
 fi
+unset __vw_state __vw_now __vw_mtime __vw_when
