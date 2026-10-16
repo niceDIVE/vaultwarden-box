@@ -35,7 +35,7 @@ cd C:\Tools\age
 ```
 
 3. **确认成功的标志**：目录里出现 `vw-backup.tar.gz`，且命令没有报错。
-4. （可选）看一眼包里有什么：`.\tar.exe -tzf vw-backup.tar.gz`
+4. （可选）看一眼包里有什么：`tar -tzf vw-backup.tar.gz`（Windows 10/11 自带 tar）
    应该能看到 `db.sqlite3`、`attachments/`、`sends/`、`rsa_key*`、`config.json`、`env`、`docker-compose.yml`。
 
 ---
