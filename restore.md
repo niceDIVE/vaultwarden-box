@@ -162,4 +162,4 @@ rm -f /tmp/vw-backup.tar.gz
 - **`age: error: decryption failed`** → 私钥文件不对（可能拿了公钥或别的密钥）。检查 `key.txt` 第一行是否以 `AGE-SECRET-KEY-` 开头。
 - **`scp` 提示 permission denied** → 确认用户名是 `vwadmin` 且你在用 Tailscale 地址连接（公网 22 已被防火墙封锁，这是故意的）。
 - **登录页能开但密码错误** → 主密码不随服务器存储/恢复，它在你脑子里。主密码丢了且没有客户端还登录着，数据无法找回——所以主密码请用密码箱自己存一份纸质副本在保险处。
-- **恢复后 HTTPS 打不开** → 新服务器域名变了导致 DOMAIN 不对，按【情况 B】第 2 步改 `.env` 后 `sudo docker compose up -d`。
+- **恢复后 HTTPS 打不开** → 新服务器域名变了导致 DOMAIN 不对，按【情况 B】第 3 步改 `.env` 后 `sudo docker compose up -d`。
