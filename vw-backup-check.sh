@@ -11,7 +11,7 @@ if [ -r "$__vw_state/last-success" ]; then
         printf '\033[32m✓ 最近一次备份：%s\033[0m\n' "${__vw_when:-时间未知}"
     fi
 else
-    printf '\033[31m⚠ 超过 26 小时没有成功的备份，请运行 sudo /opt/vaultwarden/backup.sh 查看原因\033[0m\n'
+    printf '\033[33m⚠ 还没有成功的备份，请按安装指南第 4 节试跑一次\033[0m\n'
 fi
 if [ -r "$__vw_state/offsite-failed" ]; then
     printf '\033[33m⚠ 上次异地同步失败：%s，见安装指南第 10 节\033[0m\n' "$(tr '\n' ' ' < "$__vw_state/offsite-failed" 2>/dev/null)"
