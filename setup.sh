@@ -34,7 +34,7 @@ banner() { echo; echo "================ $* ================"; }
 # ---------------- 前置检查 ----------------
 [ "$(id -u)" -eq 0 ] || fail "请用 root 或 sudo 运行：sudo bash setup.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-for f in docker-compose.yml .env.example backup.sh vw-backup.service vw-backup.timer; do
+for f in docker-compose.yml .env.example backup.sh vw-backup-check.sh vw-backup.service vw-backup.timer; do
   [ -f "$SCRIPT_DIR/$f" ] || fail "当前目录缺少文件 $f —— 请把整个部署文件夹完整上传到服务器"
 done
 
@@ -264,6 +264,8 @@ fi
 # ============================================================================
 banner "阶段 9/10  启用每日加密备份定时任务"
 # ============================================================================
+install -m 644 "$SCRIPT_DIR/vw-backup-check.sh" /etc/profile.d/vw-backup-check.sh
+ok "登录备份状态提醒已安装（/etc/profile.d/vw-backup-check.sh）"
 systemctl daemon-reload
 systemctl enable --now vw-backup.timer >/dev/null 2>&1
 ok "每日备份定时任务已启用（北京时间 04:00，系统时区 $SRV_TZ）"
