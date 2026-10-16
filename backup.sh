@@ -73,9 +73,16 @@ CHK="$(sqlite3 "$STAGE/db.sqlite3" 'PRAGMA integrity_check;')"
 log "数据库导出完成，完整性校验通过"
 
 # ---------------- 3) 汇集其余需要备份的内容 ----------------
-cp -a "$DATA_DIR/attachments/." "$STAGE/attachments/" 2>/dev/null || true
-cp -a "$DATA_DIR/sends/."       "$STAGE/sends/"       2>/dev/null || true
-cp -a "$DATA_DIR"/rsa_key*      "$STAGE/"             2>/dev/null || true
+for d in attachments sends; do
+  if [ -d "$DATA_DIR/$d" ]; then
+    cp -a "$DATA_DIR/$d/." "$STAGE/$d/" || die "复制 $d 失败（磁盘满或权限问题？）"
+  fi
+done
+if compgen -G "$DATA_DIR/rsa_key*" >/dev/null; then
+  cp -a "$DATA_DIR"/rsa_key* "$STAGE/" || die "复制 rsa_key 失败"
+else
+  log "[注意] 没有找到 rsa_key*：恢复后所有客户端需要重新登录（数据不受影响）"
+fi
 if [ -f "$DATA_DIR/config.json" ]; then cp -a "$DATA_DIR/config.json" "$STAGE/"; fi
 cp -a "$ENV_FILE"               "$STAGE/env"
 cp -a "$VW_DIR/docker-compose.yml" "$STAGE/docker-compose.yml"
