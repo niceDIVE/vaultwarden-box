@@ -94,10 +94,8 @@ age -R "$AGE_PUBLIC_KEY" -o "$OUT" "$TMP/payload.tar.gz"
 chmod 600 "$OUT"
 log "已生成加密备份：$OUT（大小 $(du -h "$OUT" | cut -f1)）"
 
-# 快速自检：加密包必须无法被随意读取
-if tar -tzf "$OUT" >/dev/null 2>&1; then
-  die "异常：$OUT 竟然能直接读取，说明没有加密成功，请立即检查 age 配置"
-fi
+# 快速自检：必须是 age 加密格式（文件头 age-encryption.org/v1）
+[ "$(head -c 21 "$OUT" 2>/dev/null)" = "age-encryption.org/v1" ] || die "异常：$OUT 不是 age 加密文件，请立即检查 age 配置"
 
 # ---------------- 5) 清理过期备份 ----------------
 find "$BACKUP_DIR" -maxdepth 1 -name 'vw-backup-*.tar.gz.age' -mtime +"$RETENTION_DAYS" \
