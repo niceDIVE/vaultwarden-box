@@ -264,6 +264,16 @@ ok "登录备份状态提醒已安装（/etc/profile.d/vw-backup-check.sh）"
 systemctl daemon-reload
 systemctl enable --now vw-backup.timer >/dev/null 2>&1
 ok "每日备份定时任务已启用（北京时间 04:00，系统时区 $SRV_TZ）"
+cat > /etc/logrotate.d/vw-backup <<'LREOF'
+/var/log/vw-backup.log {
+    weekly
+    rotate 8
+    compress
+    missingok
+    notifempty
+}
+LREOF
+ok "备份日志轮转已配置（/etc/logrotate.d/vw-backup，weekly 保留 8 份）"
 info "查看下次执行时间：systemctl list-timers vw-backup.timer"
 
 if grep -q '^AGE_PUBLIC_KEY=$' "$VW_DIR/.env" 2>/dev/null || ! grep -q '^AGE_PUBLIC_KEY=age1' "$VW_DIR/.env" 2>/dev/null; then
