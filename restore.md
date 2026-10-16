@@ -61,13 +61,18 @@ ssh vwadmin@<服务器Tailscale地址>
 ```
 
 3. 在服务器上执行以下命令（逐条粘贴，每条回车）：
-
 ```bash
+# 暂停定时备份，避免恢复过程中触发一次坏备份
+sudo systemctl stop vw-backup.timer
+
+# 先验证备份包完好（不显示"包完好"就停止，不要继续往下做）
+sudo tar -tzf /tmp/vw-backup.tar.gz >/dev/null && echo 包完好
+
 # 停掉容器
 cd /opt/vaultwarden && sudo docker compose down
 
-# 清空数据目录（这是"删掉容器和数据"的那一步）
-sudo rm -rf /opt/vaultwarden/data
+# 旧数据先改名保留（不要删！恢复失败靠它回到原状）
+sudo mv /opt/vaultwarden/data /opt/vaultwarden/data.old-$(date +%F)
 sudo mkdir -p /opt/vaultwarden/data
 
 # 解开备份包，覆盖到数据目录
@@ -84,7 +89,6 @@ cd /opt/vaultwarden && sudo docker compose up -d
 # 等 10 秒，确认服务活着（输出 OK 即成功）
 sleep 10 && curl http://127.0.0.1:8222/alive
 ```
-
 4. **清理明文临时文件**（重要！明文数据库不能留在服务器上）：
 
 ```bash
@@ -92,6 +96,9 @@ rm -f /tmp/vw-backup.tar.gz
 ```
 
 5. 跳到本文【三、逐项验收】。
+
+> **恢复失败怎么回到原状**：`cd /opt/vaultwarden && sudo docker compose down` → 删除新解压出来的 data → 把 `data.old-日期` 改回 `data` → `sudo docker compose up -d`。
+> **第三节验收全部通过后**，再清理并恢复定时任务：`sudo rm -rf /opt/vaultwarden/data.old-*` 和 `sudo systemctl start vw-backup.timer`。
 
 ### 情况 B：全新服务器（原服务器报废）
 
