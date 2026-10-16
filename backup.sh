@@ -126,7 +126,7 @@ if [ -n "$OFFSITE_TARGET" ]; then
   RSH="ssh"
   if [ -n "$OFFSITE_SSH_KEY" ]; then RSH="ssh -i \"$OFFSITE_SSH_KEY\""; fi
   set +e
-  OFFSITE_ERR="$(rsync -a -e "$RSH -o BatchMode=yes -o ConnectTimeout=15" \
+  OFFSITE_ERR="$(rsync -rt --ignore-existing -e "$RSH -o BatchMode=yes -o ConnectTimeout=15" \
        "$BACKUP_DIR/" "$OFFSITE_TARGET" 2>&1)"
   RC=$?
   set -e
