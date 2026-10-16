@@ -102,17 +102,16 @@ rm -f /tmp/vw-backup.tar.gz
 
 ### 情况 B：全新服务器（原服务器报废）
 
-1. **先把新服务器部署到"可用"状态**：按《安装指南.md》第 1～2 节完成：
+0. **先在 Tailscale 后台删除旧服务器**：浏览器打开 https://login.tailscale.com/admin/machines → 找到旧密码箱服务器 → Remove。这样新服务器才能沿用原来的 `vaultwarden.xxx.ts.net` 域名，**客户端（Windows/安卓）就不用改服务器地址**。
+1. **把新服务器部署到"可用"状态**：按《安装指南.md》第 1～2 节完成：
    - 开通 Ubuntu 24.04 VPS、首次 SSH 登录
    - 上传部署文件夹、运行 `sudo bash setup.sh`（会自动装好 Docker、Tailscale、备份定时任务等）
    - 此时 Tailscale 会给新服务器分配域名，**记下它**（用 `tailscale ip -4` 和 `tailscale status` 查看）
-
 2. **按【情况 A】的第 1～4 步完成上传、解压、还原、启动**。
    注意：解压会把备份包里的旧 `.env` 覆盖到新服务器上——这正是想要的，
    因为旧 `.env` 里保存着你的 age 公钥和账号策略。但旧 `.env` 里的 `DOMAIN`
    指向旧服务器的域名，所以下一步要修正它。
-
-3. **修正域名**：新服务器的 ts.net 域名可能与旧服务器不同，如果不同，改回来：
+3. **修正域名**：如果新服务器的 ts.net 域名与旧服务器不同（做了第 0 步则应该相同），改回来：
 
    ```bash
    sudo nano /opt/vaultwarden/.env
@@ -122,8 +121,10 @@ rm -f /tmp/vw-backup.tar.gz
    ```
 
    查看新服务器域名的命令：`tailscale status`（Self 一行里 `vaultwarden.xxx.ts.net` 就是）。
-
 4. 如果客户端（Windows/安卓）里的服务器地址变了，也要改成新地址。
+5. **恢复异地同步**：旧同步密钥随旧服务器一起丢失了。按《安装指南.md》第 10 节第 3～6 步
+   重新生成同步密钥、替换备份机上的 `authorized_keys`（备份机不动，只换钥匙），
+   然后跑一次 `sudo /opt/vaultwarden/backup.sh` 确认出现「异地同步完成」。否则异地同步会一直失败。
 
 ---
 
