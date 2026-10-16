@@ -121,13 +121,9 @@ install -m 700 "$SCRIPT_DIR/backup.sh"          "$VW_DIR/backup.sh"
 install -m 644 "$SCRIPT_DIR/vw-backup.service"  /etc/systemd/system/vw-backup.service
 install -m 644 "$SCRIPT_DIR/vw-backup.timer"    /etc/systemd/system/vw-backup.timer
 
-# 备份目录以 .env 配置为准（.env 刚生成或已存在）
+# 备份目录以 .env 配置为准（.env 刚生成或已存在）；只取 BACKUP_DIR，不导入整个 .env
 if [ -f "$VW_DIR/.env" ]; then
-  # shellcheck disable=SC1091
-  set -a
-  # shellcheck disable=SC1091
-  . "$VW_DIR/.env"
-  set +a
+  BACKUP_DIR="$(sed -n 's/^BACKUP_DIR=//p' "$VW_DIR/.env" 2>/dev/null | tail -n1)"
 fi
 BACKUP_DIR="${BACKUP_DIR:-$BACKUP_DIR_DEFAULT}"
 mkdir -p "$BACKUP_DIR"
