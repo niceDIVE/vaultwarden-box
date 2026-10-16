@@ -40,7 +40,7 @@ OFFSITE_SSH_KEY="${OFFSITE_SSH_KEY:-/root/.ssh/vw_offsite}"
 
 # ---------------- 前置检查 ----------------
 exec 9>/run/vw-backup.lock
-flock -n 9 || die "已有备份任务在运行，本次退出"
+flock -n 9 || { log "已有备份在运行，本次跳过"; exit 0; }
 
 OFFSITE_FAILED=0
 mkdir -p "$STATE_DIR"
