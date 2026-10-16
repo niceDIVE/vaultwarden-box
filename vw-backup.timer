@@ -1,0 +1,17 @@
+# vw-backup.timer —— 每日 04:00 触发备份
+# 安装位置：/etc/systemd/system/vw-backup.timer
+# 说明：服务器时区已由 setup.sh 设为 Asia/Shanghai，因此 04:00 即北京时间凌晨 4 点
+# 查看下次执行时间：systemctl list-timers vw-backup.timer
+
+[Unit]
+Description=每天北京时间 04:00 运行 Vaultwarden 加密备份
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+# 如果到点时服务器正在关机/重启，开机后补跑一次
+Persistent=true
+# 随机延迟 0~5 分钟，避开整点磁盘高峰
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

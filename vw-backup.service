@@ -1,0 +1,16 @@
+# vw-backup.service —— 每日密码箱备份（由 vw-backup.timer 触发）
+# 安装位置：/etc/systemd/system/vw-backup.service
+# 查看结果：journalctl -u vw-backup.service -n 50 --no-pager
+
+[Unit]
+Description=Vaultwarden 每日 age 加密备份
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/vaultwarden/backup.sh
+# 备份任务允许较长时间（附件多时）
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=idle

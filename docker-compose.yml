@@ -1,0 +1,28 @@
+# ============================================================================
+# docker-compose.yml —— 自建密码箱（Vaultwarden）
+#
+# 设计要点：
+#   1. 镜像版本固定为 1.37.2（写在 .env 的 VW_VERSION 里），绝不用 latest，
+#      保证升级完全由你手动控制。
+#   2. 端口只绑定到服务器的 127.0.0.1（本机回环），公网和局域网都摸不到它；
+#      外部访问一律走 tailscale serve 的 443 HTTPS。
+#   3. 所有敏感配置都在同目录的 .env 文件里（已加入 .gitignore）。
+#
+# 文件位置：部署后应放在 /opt/vaultwarden/docker-compose.yml
+# ============================================================================
+
+services:
+  vaultwarden:
+    image: vaultwarden/server:${VW_VERSION:-1.37.2}
+    container_name: vaultwarden
+    restart: unless-stopped
+    # .env 里的所有变量都会注入容器（DOMAIN、SIGNUPS_ALLOWED 等）
+    env_file:
+      - .env
+    ports:
+      # 只绑定本机回环地址：公网、局域网都无法直接访问，只有服务器自己能访问
+      - "127.0.0.1:${ROCKET_PORT:-8222}:${ROCKET_PORT:-8222}"
+    volumes:
+      # 所有数据（数据库、附件、密钥）都存放在宿主机这个目录里，
+      # 备份与恢复都以它为准
+      - ./data:/data
