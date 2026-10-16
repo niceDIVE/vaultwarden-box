@@ -10,7 +10,7 @@
 #   2. 连同 attachments、sends、rsa_key*、config.json、.env、compose 一起打包
 #   3. 用 age 公钥加密（私钥在离线保存，服务器上没有，所以服务器被黑也读不了备份）
 #   4. 清理超过保留期（默认 30 天）的本地旧备份
-#   5. 如果 .env 配置了 OFFSITE_TARGET，用 rsync 同步到异地服务器（失败只提醒不中断）
+#   5. 如果 .env 配置了 OFFSITE_TARGET，用 rsync 同步到异地服务器（本地失败 exit 1；仅异地失败 exit 2）
 #
 # 日志：journalctl -u vw-backup.service  以及  /var/log/vw-backup.log
 # ============================================================================
@@ -144,6 +144,6 @@ fi
 
 log "本次备份全部完成"
 if [ "${OFFSITE_FAILED:-0}" -eq 1 ]; then
-  log "[注意] 已写入 $STATE_DIR/offsite-failed，下次 SSH 登录时会红字提醒（本地备份仍保留）"
+  log "[注意] 已写入 $STATE_DIR/offsite-failed，下次 SSH 登录时会黄字提醒（本地备份仍保留）"
   exit 2
 fi
