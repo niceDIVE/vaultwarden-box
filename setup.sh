@@ -21,7 +21,7 @@ APP_PORT="${ROCKET_PORT:-8222}"             # 对内监听端口
 APP_USER="vwadmin"                          # 日常登录服务器的管理员账号
 BACKUP_DIR_DEFAULT="/var/backups/vaultwarden"  # 备份目录默认值（实际以 .env 中 BACKUP_DIR 为准，见阶段 5）
 SRV_TZ="Asia/Shanghai"                      # 服务器时区（备份时间按此计算）
-SSH_HARDEN_CONF="/etc/ssh/sshd_config.d/60-vw-hardening.conf"
+SSH_HARDEN_CONF="/etc/ssh/sshd_config.d/01-vw-hardening.conf"
 
 # ---------------- 输出辅助 ----------------
 c_g='\033[0;32m'; c_r='\033[0;31m'; c_y='\033[1;33m'; c_0='\033[0m'
@@ -241,11 +241,14 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 PubkeyAuthentication yes
 EOF
-  if sshd -t 2>/dev/null; then
-    systemctl reload ssh
-    ok "SSH 已加固：禁止 root 登录 / 禁止密码登录 / 仅密钥认证"
+    # 先校验实际生效值（sshd 只认第一次出现的值；云镜像的 50-cloud-init.conf 可能写允许密码，01- 前置保证我们排最前）
+  sshd -T | grep -Ei 'passwordauthentication|kbdinteractiveauthentication|permitrootlogin'
+  if [ "$(sshd -T | grep -i '^passwordauthentication' | awk '{print $2}')" != "no" ] ||
+     [ "$(sshd -T | grep -i '^permitrootlogin' | awk '{print $2}')" != "no" ]; then
+    warn "sshd 实际生效值与预期不符，不执行 reload。请检查 /etc/ssh/sshd_config.d/ 下的其他文件后重跑本脚本。"
   else
-    warn "sshd 配置校验未通过，已保留原配置。请运行 sshd -t 查看错误。"
+    sshd -t && systemctl reload ssh
+    ok "SSH 已加固：禁止 root 登录 / 禁止密码登录 / 仅密钥认证（已用 sshd -T 核验实际生效值）"
   fi
 else
   warn "管理员账号还没有 SSH 公钥，本阶段跳过 SSH 加固（避免把你锁在门外）。"
