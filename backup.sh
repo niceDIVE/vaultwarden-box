@@ -111,11 +111,11 @@ else
   chmod 600 "$OUT"
 fi
 log "已生成加密备份：$OUT（大小 $(du -h "$OUT" | cut -f1)）"
-date '+%F %T' > "$STATE_DIR/last-success"
-chmod 644 "$STATE_DIR/last-success"
 
 # 快速自检：必须是 age 加密格式（文件头 age-encryption.org/v1）
 [ "$(head -c 21 "$OUT" 2>/dev/null)" = "age-encryption.org/v1" ] || die "异常：$OUT 不是 age 加密文件，请立即检查 age 配置"
+date '+%F %T' > "$STATE_DIR/last-success"
+chmod 644 "$STATE_DIR/last-success"
 
 # ---------------- 5) 清理过期备份 ----------------
 find "$BACKUP_DIR" -maxdepth 1 -name 'vw-backup-*.tar.gz.age' -mtime +"$RETENTION_DAYS" \
