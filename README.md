@@ -58,4 +58,4 @@
 - 客户端不启用 Bitwarden 推送通知，依赖打开/刷新时同步。
 - 备份本地失败 exit 1、仅异地失败 exit 2，均被 systemd 标记失败；状态写入 /var/lib/vw-backup，下次 SSH 登录时红字（超 26 小时）/黄字（异地失败）提醒，不引入邮件或第三方通知。
 - 异地备份只写、不可删除，落地 2 小时后由备份机 chattr +i 锁定不可修改；永久保留，由备份机每日定时清理 90 天以上的旧备份。
-- 异地同步经 Tailscale 内网 + rrsync 限制为只写不可删（备份机 authorized_keys 加 command 限制）。
+- 异地同步经 Tailscale 内网 + rrsync 限制为只写、不可删除（落地 2 小时后锁定不可修改；备份机 authorized_keys 加 command 限制）。
