@@ -12,5 +12,7 @@ Type=oneshot
 ExecStart=/opt/vaultwarden/backup.sh
 # 备份任务允许较长时间（附件多时）
 TimeoutStartSec=2h
+# 明文暂存文件随服务退出自动清除
+PrivateTmp=yes
 Nice=10
 IOSchedulingClass=idle
