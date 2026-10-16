@@ -72,7 +72,7 @@ sudo systemctl stop vw-backup.timer
 cd /opt/vaultwarden && sudo docker compose down
 
 # 旧数据先改名保留（不要删！恢复失败靠它回到原状）
-sudo mv /opt/vaultwarden/data /opt/vaultwarden/data.old-$(date +%F)
+sudo mv /opt/vaultwarden/data /opt/vaultwarden/data.old-$(date +%F-%H%M%S)
 sudo mkdir -p /opt/vaultwarden/data
 
 # 解开备份包，覆盖到数据目录
@@ -105,7 +105,15 @@ sudo systemctl start vw-backup.timer
 
    **成功标志**：`systemctl is-active vw-backup.timer` 输出 `active`。
 
-> **恢复失败怎么回到原状**：`cd /opt/vaultwarden && sudo docker compose down` → 删除新解压出来的 data → 把 `data.old-日期` 改回 `data` → `sudo docker compose up -d`。
+> **恢复失败怎么回到原状**（在第三节验收发现问题、需要退回旧数据时，在服务器上逐条执行）：
+>
+> ```bash
+> cd /opt/vaultwarden && sudo docker compose down
+> ls -d /opt/vaultwarden/data.old-*      ← 看清楚名字
+> sudo rm -rf /opt/vaultwarden/data
+> sudo mv /opt/vaultwarden/data.old-<上面看到的时间> /opt/vaultwarden/data
+> sudo docker compose up -d
+> ```
 
 ### 情况 B：全新服务器（原服务器报废）
 
