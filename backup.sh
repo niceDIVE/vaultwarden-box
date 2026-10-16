@@ -20,6 +20,7 @@ VW_DIR="/opt/vaultwarden"
 DATA_DIR="$VW_DIR/data"
 ENV_FILE="$VW_DIR/.env"
 LOG_FILE="/var/log/vw-backup.log"
+STATE_DIR="/var/lib/vw-backup"
 
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG_FILE"; }
 die() { log "[失败] $*"; exit 1; }
@@ -40,6 +41,10 @@ OFFSITE_SSH_KEY="${OFFSITE_SSH_KEY:-/root/.ssh/vw_offsite}"
 # ---------------- 前置检查 ----------------
 exec 9>/run/vw-backup.lock
 flock -n 9 || die "已有备份任务在运行，本次退出"
+
+OFFSITE_FAILED=0
+mkdir -p "$STATE_DIR"
+chmod 755 "$STATE_DIR"
 
 command -v sqlite3 >/dev/null || die "缺少 sqlite3"
 command -v age     >/dev/null || die "缺少 age"
@@ -106,6 +111,8 @@ else
   chmod 600 "$OUT"
 fi
 log "已生成加密备份：$OUT（大小 $(du -h "$OUT" | cut -f1)）"
+date '+%F %T' > "$STATE_DIR/last-success"
+chmod 644 "$STATE_DIR/last-success"
 
 # 快速自检：必须是 age 加密格式（文件头 age-encryption.org/v1）
 [ "$(head -c 21 "$OUT" 2>/dev/null)" = "age-encryption.org/v1" ] || die "异常：$OUT 不是 age 加密文件，请立即检查 age 配置"
@@ -118,12 +125,23 @@ find "$BACKUP_DIR" -maxdepth 1 -name 'vw-backup-*.tar.gz.age' -mtime +"$RETENTIO
 if [ -n "$OFFSITE_TARGET" ]; then
   RSH="ssh"
   if [ -n "$OFFSITE_SSH_KEY" ]; then RSH="ssh -i \"$OFFSITE_SSH_KEY\""; fi
-  if rsync -a -e "$RSH -o BatchMode=yes -o ConnectTimeout=15" \
-       "$BACKUP_DIR/" "$OFFSITE_TARGET" 2>/dev/null; then
+  set +e
+  OFFSITE_ERR="$(rsync -a -e "$RSH -o BatchMode=yes -o ConnectTimeout=15" \
+       "$BACKUP_DIR/" "$OFFSITE_TARGET" 2>&1)"
+  RC=$?
+  set -e
+  if [ "$RC" -eq 0 ]; then
+    rm -f "$STATE_DIR/offsite-failed"
     log "异地同步完成：$OFFSITE_TARGET"
   else
-    log "[注意] 异地同步失败（本地备份不受影响）。请检查异地服务器与 SSH 密钥配置。"
+    printf '%s 异地同步失败（本地备份成功，不受影响）\n' "$(date '+%F %T')" > "$STATE_DIR/offsite-failed"
+    log "[注意] 本地成功、异地失败：$OFFSITE_ERR"
+    OFFSITE_FAILED=1
   fi
 fi
 
 log "本次备份全部完成"
+if [ "${OFFSITE_FAILED:-0}" -eq 1 ]; then
+  log "[注意] 已写入 $STATE_DIR/offsite-failed，下次 SSH 登录时会红字提醒（本地备份仍保留）"
+  exit 2
+fi
