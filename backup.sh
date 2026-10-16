@@ -138,6 +138,8 @@ if [ -n "$OFFSITE_TARGET" ]; then
     log "[注意] 本地成功、异地失败：$OFFSITE_ERR"
     OFFSITE_FAILED=1
   fi
+else
+  rm -f "$STATE_DIR/offsite-failed"
 fi
 
 log "本次备份全部完成"
