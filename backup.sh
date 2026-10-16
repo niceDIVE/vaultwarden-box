@@ -51,7 +51,14 @@ esac
 [ -f "$DATA_DIR/db.sqlite3" ] || die "找不到数据库 $DATA_DIR/db.sqlite3"
 
 mkdir -p "$BACKUP_DIR"
-chmod 700 "$BACKUP_DIR"
+# D1：备份目录组可读（包已 age 加密，组可读无风险；vwadmin 可直接 scp 下载）
+if getent group vwadmin >/dev/null 2>&1; then
+  chown root:vwadmin "$BACKUP_DIR"
+  chmod 750 "$BACKUP_DIR"
+else
+  chmod 700 "$BACKUP_DIR"
+  log "[注意] 不存在 vwadmin 组，备份目录保持 700（仅 root 可读）"
+fi
 
 STAMP="$(date +%Y%m%d-%H%M)"
 TMP="$(mktemp -d /tmp/vw-backup.XXXXXX)"
@@ -91,7 +98,13 @@ cp -a "$VW_DIR/docker-compose.yml" "$STAGE/docker-compose.yml"
 tar -C "$STAGE" -czf "$TMP/payload.tar.gz" .
 OUT="$BACKUP_DIR/vw-backup-$STAMP.tar.gz.age"
 age -R "$AGE_PUBLIC_KEY" -o "$OUT" "$TMP/payload.tar.gz"
-chmod 600 "$OUT"
+if getent group vwadmin >/dev/null 2>&1; then
+  chown root:vwadmin "$OUT"
+  chmod 640 "$OUT"
+  find "$BACKUP_DIR" -maxdepth 1 -name 'vw-backup-*.tar.gz.age' -exec chown root:vwadmin {} + -exec chmod 640 {} +
+else
+  chmod 600 "$OUT"
+fi
 log "已生成加密备份：$OUT（大小 $(du -h "$OUT" | cut -f1)）"
 
 # 快速自检：必须是 age 加密格式（文件头 age-encryption.org/v1）
