@@ -137,10 +137,19 @@ else
   ok "已生成 $VW_DIR/.env（模板复制而来，不含任何密钥）"
 fi
 
-# 自动把 ts.net 域名填进 DOMAIN（仅在仍是占位符时执行）
-if grep -q '^DOMAIN=https://your-machine\.' "$VW_DIR/.env"; then
-  sed -i "s|^DOMAIN=.*|DOMAIN=https://$TS_FQDN|" "$VW_DIR/.env"
-  ok "DOMAIN 已自动填入：https://$TS_FQDN"
+# DOMAIN 校准：占位符就自动填；已填但与期望不一致则黄字告警（不强行覆盖人为配置）
+EXPECTED_DOMAIN="https://$TS_FQDN"
+CUR_DOMAIN="$(sed -n 's/^DOMAIN=//p' "$VW_DIR/.env" 2>/dev/null | tail -n1)"
+if [ -z "$CUR_DOMAIN" ] || grep -q '^DOMAIN=https://your-machine\.' "$VW_DIR/.env" 2>/dev/null; then
+  sed -i "s|^DOMAIN=.*|DOMAIN=$EXPECTED_DOMAIN|" "$VW_DIR/.env"
+  ok "DOMAIN 已填入：$EXPECTED_DOMAIN"
+elif [ "$CUR_DOMAIN" != "$EXPECTED_DOMAIN" ]; then
+  warn "DOMAIN 与当前 ts.net 域名不一致（客户端填的地址必须与它完全一致，否则 WebAuthn/附件会出错）："
+  warn "  配置文件里：$CUR_DOMAIN"
+  warn "  当前期望  ：$EXPECTED_DOMAIN"
+  warn "确认要改就执行：sudo sed -i 's|^DOMAIN=.*|DOMAIN=$EXPECTED_DOMAIN|' $VW_DIR/.env && cd $VW_DIR && docker compose up -d"
+else
+  ok "DOMAIN 已是 $EXPECTED_DOMAIN"
 fi
 
 # ============================================================================
@@ -166,8 +175,14 @@ fi
 # ============================================================================
 banner "阶段 7/10  配置 Tailscale HTTPS 反代（tailscale serve）"
 # ============================================================================
-if tailscale serve status 2>/dev/null | grep -q "https://"; then
-  ok "tailscale serve 已配置过，跳过"
+SERVE_STATUS="$(tailscale serve status 2>/dev/null || true)"
+if printf '%s' "$SERVE_STATUS" | grep -q "127.0.0.1:${APP_PORT}"; then
+  ok "tailscale serve 已指向 127.0.0.1:${APP_PORT}，跳过"
+elif printf '%s' "$SERVE_STATUS" | grep -q "127\.0\.0\.1:"; then
+  warn "443 上已经有别的服务在代理，本脚本【不覆盖】它。当前配置："
+  printf '%s\n' "$SERVE_STATUS"
+  warn "这就是「一台机器别跑两套对外服务」的原因。若确认要用 443 给密码箱，先手动清理："
+  warn "  sudo tailscale serve --https=443 off"
 else
   # 注意：需要先在 Tailscale 管理后台开启 HTTPS 证书（见安装指南 2.6 节）
   if tailscale serve --bg --https=443 "http://127.0.0.1:${APP_PORT}" 2>/tmp/vw-serve.err; then
@@ -199,41 +214,61 @@ fi
 # ============================================================================
 banner "阶段 8/10  SSH 加固 + 创建管理员账号"
 # ============================================================================
+# --- 8.1 账号：独立判断 ---
 if id "$APP_USER" &>/dev/null; then
-  ok "管理员账号 $APP_USER 已存在，跳过"
+  ok "管理员账号 $APP_USER 已存在"
 else
   useradd -m -s /bin/bash "$APP_USER"
-  install -d -m 700 -o "$APP_USER" -g "$APP_USER" "/home/$APP_USER/.ssh"
-  touch "/home/$APP_USER/.ssh/authorized_keys"
+  ok "已创建管理员账号 $APP_USER"
+fi
+install -d -m 700 -o "$APP_USER" -g "$APP_USER" "/home/$APP_USER/.ssh"
+AK="/home/$APP_USER/.ssh/authorized_keys"
+
+# --- 8.2 公钥：独立判断。补齐失败只警告，不中断，避免"账号已建好但 sudoers 没写"的半成品状态 ---
+touch "$AK"
+if [ ! -s "$AK" ]; then
   if [ -s /root/.ssh/authorized_keys ]; then
-    # 沿用 root 现有的登录密钥
-    cat /root/.ssh/authorized_keys > "/home/$APP_USER/.ssh/authorized_keys"
+    cat /root/.ssh/authorized_keys > "$AK"
     ok "已把 root 的 SSH 公钥复制给 $APP_USER"
   else
     echo
-    warn "root 还没有 SSH 公钥。请把你的【公钥】粘贴到下面（一行，以 ssh-ed25519 或 ssh-rsa 开头）。"
+    warn "还没有可用的 SSH 公钥。请把你的【公钥】粘贴到下面（一行，以 ssh-ed25519 / ssh-rsa / ecdsa-sha2 开头）。"
     warn "公钥是长得像 ssh-ed25519 AAAA.... 的一行文字，不是私钥！"
-    read -r PUBKEY
+    read -r PUBKEY || PUBKEY=""
     case "$PUBKEY" in
-      ssh-*\ *) echo "$PUBKEY" > "/home/$APP_USER/.ssh/authorized_keys" ;;
-      *) fail "看起来不是有效的 SSH 公钥，请重新运行本脚本" ;;
+      ssh-*\ *|ecdsa-sha2-*\ *|sk-ssh-*\ *) echo "$PUBKEY" > "$AK"; ok "公钥已写入" ;;
+      "") warn "未输入公钥，本次跳过写入（重跑本脚本可再试）" ;;
+      *) warn "看起来不是有效的 SSH 公钥，本次跳过写入（不会中断其它步骤）" ;;
     esac
   fi
-  chown "$APP_USER:$APP_USER" "/home/$APP_USER/.ssh/authorized_keys"
-  chmod 600 "/home/$APP_USER/.ssh/authorized_keys"
-  echo "$APP_USER ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/90-$APP_USER"
-  chmod 440 "/etc/sudoers.d/90-$APP_USER"
-  ok "管理员账号 $APP_USER 创建完成（已具备 sudo 权限，登录后直接可用）"
+fi
+chown "$APP_USER:$APP_USER" "$AK"
+chmod 600 "$AK"
+
+# --- 8.3 sudoers：无论账号是否早已存在，都必须确保在位 ---
+SUDOERS="/etc/sudoers.d/90-$APP_USER"
+if [ ! -f "$SUDOERS" ]; then
+  echo "$APP_USER ALL=(ALL) NOPASSWD:ALL" > "$SUDOERS"
+  chmod 440 "$SUDOERS"
+  ok "已写入 sudo 权限（$SUDOERS）"
+else
+  ok "sudo 权限已存在（$SUDOERS）"
 fi
 
-# D1：备份目录组权限（vwadmin 直接 scp 下载备份用；backup.sh 每次运行也会补设）
+# --- 8.4 D1：备份目录组权限（与账号步骤无关，独立执行）---
 if getent group "$APP_USER" >/dev/null 2>&1; then
   chown root:"$APP_USER" "$BACKUP_DIR"
   chmod 750 "$BACKUP_DIR"
 fi
 
-# 只在管理员账号确实装好了公钥之后，才收紧 SSH
-if [ -s "/home/$APP_USER/.ssh/authorized_keys" ]; then
+# --- 8.5 加固：先双重确认（公钥在位 + sudo 真的可用），再收紧 ---
+if [ ! -s "$AK" ]; then
+  warn "管理员账号还没有 SSH 公钥，本阶段跳过 SSH 加固（避免把你锁在门外）。"
+  warn "把公钥放入 $AK 后重跑本脚本即可。"
+elif ! sudo -l -U "$APP_USER" 2>/dev/null | grep -q '(ALL)'; then
+  warn "检测不到 $APP_USER 的 sudo 权限，本阶段跳过 SSH 加固（避免锁死）。"
+  warn "请检查 $SUDOERS 后重跑本脚本。"
+else
   cat > "$SSH_HARDEN_CONF" <<EOF
 # 由 setup.sh 生成：只允许密钥登录，禁止 root 与密码登录
 PermitRootLogin no
@@ -241,7 +276,7 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 PubkeyAuthentication yes
 EOF
-    # 先校验实际生效值（sshd 只认第一次出现的值；云镜像的 50-cloud-init.conf 可能写允许密码，01- 前置保证我们排最前）
+  # 先校验实际生效值（sshd 只认第一次出现的值；云镜像的 50-cloud-init.conf 可能写允许密码，01- 前置保证我们排最前）
   sshd -T | grep -Ei 'passwordauthentication|kbdinteractiveauthentication|permitrootlogin'
   if [ "$(sshd -T | grep -i '^passwordauthentication' | awk '{print $2}')" != "no" ] ||
      [ "$(sshd -T | grep -i '^permitrootlogin' | awk '{print $2}')" != "no" ]; then
@@ -250,9 +285,6 @@ EOF
     sshd -t && systemctl reload ssh
     ok "SSH 已加固：禁止 root 登录 / 禁止密码登录 / 仅密钥认证（已用 sshd -T 核验实际生效值）"
   fi
-else
-  warn "管理员账号还没有 SSH 公钥，本阶段跳过 SSH 加固（避免把你锁在门外）。"
-  warn "把公钥放入 /home/$APP_USER/.ssh/authorized_keys 后重跑本脚本即可。"
 fi
 
 # ============================================================================
@@ -284,12 +316,28 @@ fi
 # ============================================================================
 banner "阶段 10/10  防火墙封锁公网（只在经 Tailscale 登录时执行）"
 # ============================================================================
-SRC_IP="${SSH_CLIENT:-}"; SRC_IP="${SRC_IP%% *}"
-TS_IP="$(tailscale ip -4 2>/dev/null | head -n1)"
+# 判断来源 IP 是否属于 Tailscale 的 CGNAT 段 100.64.0.0/10。
+is_tailscale_ip() {
+  local ip="$1" second
+  case "$ip" in
+    100.*) ;;
+    *) return 1 ;;
+  esac
+  second="${ip#100.}"; second="${second%%.*}"
+  case "$second" in ''|*[!0-9]*) return 1 ;; esac
+  if [ "$second" -ge 64 ] && [ "$second" -le 127 ]; then return 0; fi
+  return 1
+}
 
-if [ -n "$SRC_IP" ] && [ "$SRC_IP" != "$TS_IP" ]; then
-  warn "检测到你当前是【公网 IP】SSH 登录（来源 $SRC_IP）。"
-  warn "为避免把自己锁在门外，本阶段已跳过。请按以下顺序操作后重跑本脚本："
+# 登录来源 IP：优先用 who -m（sudo 会清空 SSH_CLIENT，但 who -m 仍能给出当前会话来源）。
+SRC_IP="$(who -m 2>/dev/null | awk '{print $NF}' | tr -d '()' | head -n1)"
+[ -n "$SRC_IP" ] || SRC_IP="${SSH_CLIENT:-}"
+SRC_IP="${SRC_IP%% *}"
+
+if ! is_tailscale_ip "$SRC_IP"; then
+  warn "无法确认你是经 Tailscale 登录（当前来源：${SRC_IP:-未知}）。"
+  warn "为避免把自己锁在门外，本阶段【已跳过】——这是不冒险，不代表已经安全。"
+  warn "请按以下顺序操作后重跑本脚本："
   warn "  1) 在 Windows 上安装 Tailscale 并登录同一账号（安装指南第 2.7 节）"
   warn "  2) 用 Tailscale 地址重新 SSH 登录本服务器：ssh $APP_USER@$(tailscale ip -4 | head -n1)"
   warn "  3) 重新运行：sudo bash setup.sh"

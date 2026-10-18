@@ -13,7 +13,12 @@ if [ -r "$__vw_state/last-success" ]; then
 else
     printf '\033[33m⚠ 还没有成功的备份，请按安装指南第 4 节试跑一次\033[0m\n'
 fi
+# 未配置异地备份时必须明说：本地备份与密码库同盘，磁盘/实例损坏会一起丢（避免"绿色✓"造成假安心）
+__vw_env=/opt/vaultwarden/.env
+if [ -r "$__vw_env" ] && ! grep -qE '^OFFSITE_TARGET=.+' "$__vw_env" 2>/dev/null; then
+    printf '\033[33m⚠ 未配置异地备份：备份与密码库在同一块磁盘上，磁盘或实例损坏会一起丢。建议每周手动下载一次备份到本机或 U 盘。\033[0m\n'
+fi
 if [ -r "$__vw_state/offsite-failed" ]; then
     printf '\033[33m⚠ 上次异地同步失败：%s，见安装指南第 10 节\033[0m\n' "$(tr '\n' ' ' < "$__vw_state/offsite-failed" 2>/dev/null)"
 fi
-unset __vw_state __vw_now __vw_mtime __vw_when
+unset __vw_state __vw_now __vw_mtime __vw_when __vw_env

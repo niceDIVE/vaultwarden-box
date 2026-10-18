@@ -102,7 +102,7 @@ cp -a "$VW_DIR/docker-compose.yml" "$STAGE/docker-compose.yml"
 # ---------------- 4) 打包 + age 公钥加密 ----------------
 tar -C "$STAGE" -czf "$TMP/payload.tar.gz" .
 OUT="$BACKUP_DIR/vw-backup-$STAMP.tar.gz.age"
-age -R "$AGE_PUBLIC_KEY" -o "$OUT" "$TMP/payload.tar.gz"
+age -r "$AGE_PUBLIC_KEY" -o "$OUT" "$TMP/payload.tar.gz"
 if getent group vwadmin >/dev/null 2>&1; then
   chown root:vwadmin "$OUT"
   chmod 640 "$OUT"
